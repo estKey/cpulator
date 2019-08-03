@@ -1,0 +1,67 @@
+#!/bin/bash
+
+#if (grep -q "\.include" $1 ); then
+#	echo ".include is not allowed."
+#	exit 1
+#fi
+#if (grep -q "\.incbin" $1 ); then
+#	echo ".incbin is not allowed."
+#	exit 1
+#fi
+
+# .include and .incbin can read arbitrary files from the server. 
+# Filtering them out from the source code is unreliable (filters out too much).
+# It may be safe enough to allow .include and .incbin inside chroot so no sensitive files can be accessed.
+
+ulimit -f 12288 -c unlimited		# 12 MB output limit?
+export TEMP=./work/			# gcc creates temporary files.
+
+EXTRA_LDFLAGS=
+
+if [[ $2 == 1 ]]; then
+	# ARM
+	echo "<span class=\"cmdline\"><b>Assemble:</b> arm-altera-eabi-as -mfloat-abi=soft -march=armv7-a -mcpu=cortex-a9 -mfpu=neon-fp16 --gdwarf2 -o $1.o $1</span>"
+	./armv7/bin/arm-altera-eabi-as -mfloat-abi=soft -march=armv7-a -mcpu=cortex-a9 -mfpu=neon-fp16 --gdwarf2 -o $1.o $1 2>&1 || exit $?
+
+	echo "<span class=\"cmdline\"><b>Link:</b> arm-altera-eabi-ld $EXTRA_LDFLAGS --script build_arm.ld -e _start -u _start -o $1.elf $1.o</span>"
+	./armv7/bin/arm-altera-eabi-ld $EXTRA_LDFLAGS --script ./armv7/build_arm.ld -e _start -u _start -o $1.elf $1.o 2>&1 || exit $?
+elif [[ $2 == 17 ]]; then
+	echo '<span class="cmdline"><b>Compile:</b> arm-altera-eabi-gcc -Wall -gdwarf-2 -O1 -mno-unaligned-access -mfloat-abi=softfp -mcpu=cortex-a9 -o' "$1.o -c -x c $1</span>"
+	./armv7/bin/arm-altera-eabi-gcc -Wall -gdwarf-2 -O1 -mno-unaligned-access -mfloat-abi=softfp -mcpu=cortex-a9 -o $1.o -c -x c $1 2>&1 || exit $?
+	echo '<span class="cmdline"><b>Link:</b> arm-altera-eabi-gcc -Wl,--defsym -Wl,arm_program_mem=0x40 -Wl,--defsym -Wl,arm_available_mem_size=0x3ffffff8  -Wl,--defsym  -Wl,__cs3_stack=0x3ffffff8 -T"altera-socfpga-hosted-with-vectors.ld"' "-o $1.elf $1.o -lm</span>"
+	./armv7/bin/arm-altera-eabi-gcc -Wl,--defsym -Wl,arm_program_mem=0x40 -Wl,--defsym -Wl,arm_available_mem_size=0x3ffffff8  -Wl,--defsym  -Wl,__cs3_stack=0x3ffffff8 -T"./armv7/altera-socfpga-hosted-with-vectors.ld" -o $1.elf $1.o -lm 2>&1 || exit $?
+
+elif [[ $2 == 2 ]]; then
+	echo "<span class=\"cmdline\"><b>Assemble:</b> mipsel-as -mips32r6 --gdwarf2 -O2 -o $1.o $1</span>"
+	./mipsel-as --mips32r6 --gdwarf2 -O2 -o $1.o $1 2>&1 || exit $?
+
+	echo "<span class=\"cmdline\"><b>Link:</b> mipsel-ld $EXTRA_LDFLAGS --script build_mips.ld -e main -u main -o $1.elf $1.o</span>"
+	./mipsel-ld $EXTRA_LDFLAGS --script ./build_mips.ld -e _start -u _start -o $1.elf $1.o 2>&1 || exit $?
+
+elif [[ $2 == 3 ]]; then
+	echo "<span class=\"cmdline\"><b>Assemble:</b> mipsel-as -mips32r5 --gdwarf2 -O2 -o $1.o $1</span>"
+	./mipsel-as --mips32r5 --gdwarf2 -O2 -o $1.o $1 2>&1 || exit $?
+
+	echo "<span class=\"cmdline\"><b>Link:</b> mipsel-ld $EXTRA_LDFLAGS --script build_mips.ld -e main -u main -o $1.elf $1.o</span>"
+	./mipsel-ld $EXTRA_LDFLAGS --script ./build_mips.ld -e _start -u _start -o $1.elf $1.o 2>&1 || exit $?
+
+elif [[ $2 == 16 ]]; then
+	# Nios C
+	echo "<span class=\"cmdline\"><b>Compile:</b> nios2-elf-gcc -Wall -c -g -O1 -ffunction-sections -fverbose-asm -fno-inline -mno-cache-volatile -DSYSTEM_BUS_WIDTH=32 -DALT_SINGLE_THREADED -DALT_NO_INSTRUCTION_EMULATION -D_JTAG_UART_BASE=4280291328u -gdwarf-2 -o $1.o -x c $1</span>"
+	./nios2/H-x86_64-pc-linux-gnu/bin/nios2-elf-gcc -Wall -c -g -O1 -ffunction-sections -fverbose-asm -fno-inline -mno-cache-volatile -DSYSTEM_BUS_WIDTH=32 -DALT_SINGLE_THREADED -DALT_NO_INSTRUCTION_EMULATION -D_JTAG_UART_BASE=4280291328u -gdwarf-2 -o $1.o -x c $1 2>&1 || exit $?
+	
+	echo "<span class=\"cmdline\"><b>Link:</b> nios2-elf-gcc  -Wl,--defsym  -Wl,nasys_stack_top=0x4000000  -Wl,--defsym  -Wl,nasys_program_mem=0x200  -Wl,--defsym  -Wl,nasys_data_mem=0x200  -Wl,--section-start  -Wl,.exceptions=0x20  -Wl,--section-start  -Wl,.reset=0x0  -Wl,--section-start  -Wl,.reset=0x0  -Wl,--section-start  -Wl,.exceptions=0x20  -Wl,--script=\"nios_cpp_build.ld\"  $1.o niosII_jtag_uart.c.o -lm -o $1.elf</span>"
+	./nios2/H-x86_64-pc-linux-gnu/bin/nios2-elf-gcc  -Wl,--defsym  -Wl,nasys_stack_top=0x4000000  -Wl,--defsym  -Wl,nasys_program_mem=0x200  -Wl,--defsym  -Wl,nasys_data_mem=0x200  -Wl,--section-start  -Wl,.exceptions=0x20  -Wl,--section-start  -Wl,.reset=0x0  -Wl,--section-start  -Wl,.reset=0x0  -Wl,--section-start  -Wl,.exceptions=0x20  -Wl,--script="./nios2/nios_cpp_build.ld"  $1.o ./nios2/niosII_jtag_uart.c.o -lm -o $1.elf 2>&1 || exit $?
+
+else
+	# Nios
+	echo "<span class=\"cmdline\"><b>Assemble:</b> nios2-elf-as --gdwarf2 -o $1.o $1</span>"
+	./nios2-elf-as --gdwarf2 -o $1.o $1 2>&1 || exit $?
+
+	echo "<span class=\"cmdline\"><b>Link:</b> nios2-elf-ld --section-start .reset=0 $EXTRA_LDFLAGS --script build.ld -e _start -u _start -o $1.elf $1.o</span>"
+	./nios2-elf-ld --section-start .reset=0 $EXTRA_LDFLAGS --script ./build.ld -e _start -u _start -o $1.elf $1.o 2>&1 || exit $?
+
+fi
+
+exit 0
+
